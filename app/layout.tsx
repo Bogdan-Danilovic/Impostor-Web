@@ -25,6 +25,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({
@@ -34,7 +35,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="sr" className={`${spaceGrotesk.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col bg-slate-800 text-slate-100 font-sans selection:bg-violet-500/30">
+      <body className="min-h-full flex flex-col bg-bg font-sans noise">
         {children}
       </body>
     </html>

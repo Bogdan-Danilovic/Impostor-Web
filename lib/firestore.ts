@@ -6,6 +6,7 @@ import {
   setDoc,
   updateDoc,
   onSnapshot,
+  runTransaction,
   Unsubscribe,
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -13,122 +14,123 @@ import { Room, Player, GameMode, Category, RoomSettings } from './types';
 import { generateRoomCode, generatePlayerId, selectImpostors, getImpostorCount } from './utils';
 import { getRandomPrompt } from './prompts/index';
 
-const ROOM_DEFAULTS: Omit<Room, 'code' | 'hostId' | 'players'> = {
-  status: 'lobby',
-  gameMode: 'sentences',
-  category: 'hrana',
-  impostorIds: [],
-  currentPrompt: { crew: '', impostor: '' },
-  settings: { impostorCount: 1, revealOnVote: true },
-  votes: {},
-  eliminatedId: null,
-  winner: null,
-  round: 1,
-  createdAt: Date.now(),
-};
+function roomRef(code: string) {
+  return doc(db, 'rooms', code);
+}
 
-export async function createRoom(playerName: string): Promise<{ code: string; playerId: string }> {
-  const code = generateRoomCode();
-  const playerId = generatePlayerId();
-
-  const player: Player = {
-    id: playerId,
-    name: playerName,
-    isConnected: true,
-    isAlive: true,
-  };
-
-  const room: Room = {
-    ...ROOM_DEFAULTS,
+function newRoom(code: string, hostId: string, player: Player): Room {
+  return {
     code,
-    hostId: playerId,
+    status: 'lobby',
+    hostId,
+    gameMode: 'sentences',
+    category: 'hrana',
     players: [player],
+    impostorIds: [],
+    currentPrompt: { crew: '', impostor: '' },
+    settings: { impostorCount: 1, revealOnVote: true },
+    votes: {},
+    eliminatedId: null,
+    winner: null,
+    round: 1,
     createdAt: Date.now(),
   };
+}
 
-  await setDoc(doc(db, 'rooms', code), room);
-  return { code, playerId };
+export async function createRoom(
+  playerName: string
+): Promise<{ code: string; playerId: string }> {
+  const playerId = generatePlayerId();
+  const player: Player = { id: playerId, name: playerName, isConnected: true, isAlive: true };
+
+  let attempts = 0;
+  while (attempts < 5) {
+    const code = generateRoomCode();
+    const ref = roomRef(code);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, newRoom(code, playerId, player));
+      return { code, playerId };
+    }
+    attempts++;
+  }
+  throw new Error('Nije moguće kreirati sobu. Pokušaj ponovo.');
+}
+
+function deduplicateName(name: string, existing: string[]): string {
+  if (!existing.includes(name)) return name;
+  let n = 2;
+  while (existing.includes(`${name} ${n}`)) n++;
+  return `${name} ${n}`;
 }
 
 export async function joinRoom(
   code: string,
   playerName: string
 ): Promise<{ playerId: string; error?: string }> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
+  const ref = roomRef(code);
 
-  if (!snap.exists()) {
-    return { playerId: '', error: 'Soba ne postoji.' };
+  try {
+    const playerId = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error('Soba ne postoji.');
+
+      const room = snap.data() as Room;
+      if (room.status !== 'lobby') throw new Error('Igra je već u toku.');
+      if (room.players.length >= 12) throw new Error('Soba je puna (max 12).');
+
+      const existingNames = room.players.map((p) => p.name);
+      const uniqueName = deduplicateName(playerName, existingNames);
+
+      const id = generatePlayerId();
+      const player: Player = { id, name: uniqueName, isConnected: true, isAlive: true };
+      tx.update(ref, { players: [...room.players, player] });
+      return id;
+    });
+
+    return { playerId };
+  } catch (err) {
+    return { playerId: '', error: err instanceof Error ? err.message : 'Greška.' };
   }
-
-  const room = snap.data() as Room;
-
-  if (room.status !== 'lobby') {
-    return { playerId: '', error: 'Igra je već u toku.' };
-  }
-
-  if (room.players.length >= 12) {
-    return { playerId: '', error: 'Soba je puna (max 12).' };
-  }
-
-  const playerId = generatePlayerId();
-  const player: Player = {
-    id: playerId,
-    name: playerName,
-    isConnected: true,
-    isAlive: true,
-  };
-
-  await updateDoc(ref, {
-    players: [...room.players, player],
-  });
-
-  return { playerId };
 }
 
-export async function rejoinRoom(
-  code: string,
-  playerId: string
-): Promise<{ success: boolean }> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return { success: false };
-
-  const room = snap.data() as Room;
-  const players = room.players.map((p) =>
-    p.id === playerId ? { ...p, isConnected: true } : p
-  );
-
-  await updateDoc(ref, { players });
-  return { success: true };
+export async function rejoinRoom(code: string, playerId: string): Promise<void> {
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const room = snap.data() as Room;
+    tx.update(ref, {
+      players: room.players.map((p) =>
+        p.id === playerId ? { ...p, isConnected: true } : p
+      ),
+    });
+  });
 }
 
 export function subscribeToRoom(
   code: string,
-  callback: (room: Room | null) => void
+  callback: (room: Room | null) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
-  return onSnapshot(doc(db, 'rooms', code), (snap) => {
-    callback(snap.exists() ? (snap.data() as Room) : null);
-  });
+  return onSnapshot(
+    roomRef(code),
+    (snap) => callback(snap.exists() ? (snap.data() as Room) : null),
+    (err) => onError?.(err)
+  );
 }
 
 export async function updateRoomSettings(
   code: string,
-  updates: {
-    gameMode?: GameMode;
-    category?: Category;
-    settings?: Partial<RoomSettings>;
-  }
+  updates: { gameMode?: GameMode; category?: Category; settings?: Partial<RoomSettings> }
 ): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-
+  const ref = roomRef(code);
   if (updates.settings) {
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return;
-    const room = snap.data() as Room;
-    await updateDoc(ref, {
-      ...updates,
-      settings: { ...room.settings, ...updates.settings },
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const room = snap.data() as Room;
+      tx.update(ref, { ...updates, settings: { ...room.settings, ...updates.settings } });
     });
   } else {
     await updateDoc(ref, updates);
@@ -136,56 +138,62 @@ export async function updateRoomSettings(
 }
 
 export async function shufflePrompt(code: string): Promise<void> {
-  const ref = doc(db, 'rooms', code);
+  const ref = roomRef(code);
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
 
   const room = snap.data() as Room;
-  const prompt = getRandomPrompt(room.category as Category, room.gameMode);
+  let prompt = getRandomPrompt(room.category, room.gameMode);
+  let retries = 0;
+  while (prompt.crew === room.currentPrompt.crew && retries < 10) {
+    prompt = getRandomPrompt(room.category, room.gameMode);
+    retries++;
+  }
   await updateDoc(ref, { currentPrompt: prompt });
 }
 
 export async function kickPlayer(code: string, playerId: string): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
-
-  const room = snap.data() as Room;
-  const players = room.players.filter((p) => p.id !== playerId);
-  await updateDoc(ref, { players });
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const room = snap.data() as Room;
+    tx.update(ref, { players: room.players.filter((p) => p.id !== playerId) });
+  });
 }
 
 export async function startGame(code: string): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
 
-  const room = snap.data() as Room;
-  const playerIds = room.players.map((p) => p.id);
-  const impostorCount = getImpostorCount(playerIds.length, room.settings.impostorCount);
-  const impostorIds = selectImpostors(playerIds, impostorCount);
-  const prompt = getRandomPrompt(room.category as Category, room.gameMode);
+    const room = snap.data() as Room;
+    const playerIds = room.players.map((p) => p.id);
+    const impostorCount = getImpostorCount(playerIds.length, room.settings.impostorCount);
+    const impostorIds = selectImpostors(playerIds, impostorCount);
+    const prompt = getRandomPrompt(room.category, room.gameMode);
+    const players = room.players.map((p) => ({ ...p, isAlive: true, isConnected: true }));
 
-  const players = room.players.map((p) => ({ ...p, isAlive: true, isConnected: true }));
-
-  await updateDoc(ref, {
-    status: 'roleReveal',
-    impostorIds,
-    currentPrompt: prompt,
-    players,
-    votes: {},
-    eliminatedId: null,
-    winner: null,
-    round: 1,
+    tx.update(ref, {
+      status: 'roleReveal',
+      impostorIds,
+      currentPrompt: prompt,
+      players,
+      votes: {},
+      eliminatedId: null,
+      winner: null,
+      round: 1,
+    });
   });
 }
 
 export async function advanceToDiscussion(code: string): Promise<void> {
-  await updateDoc(doc(db, 'rooms', code), { status: 'discussion' });
+  await updateDoc(roomRef(code), { status: 'discussion' });
 }
 
 export async function advanceToVoting(code: string): Promise<void> {
-  await updateDoc(doc(db, 'rooms', code), { status: 'voting', votes: {} });
+  await updateDoc(roomRef(code), { status: 'voting', votes: {} });
 }
 
 export async function castVote(
@@ -193,13 +201,7 @@ export async function castVote(
   voterId: string,
   votedForId: string
 ): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
-
-  const room = snap.data() as Room;
-  const votes = { ...room.votes, [voterId]: votedForId };
-  await updateDoc(ref, { votes });
+  await updateDoc(roomRef(code), { [`votes.${voterId}`]: votedForId });
 }
 
 export async function processVotes(
@@ -207,66 +209,56 @@ export async function processVotes(
   eliminatedId: string | null,
   winner: 'crew' | 'impostor' | null
 ): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
 
-  const room = snap.data() as Room;
-  let players = room.players;
+    const room = snap.data() as Room;
+    const players = eliminatedId
+      ? room.players.map((p) => (p.id === eliminatedId ? { ...p, isAlive: false } : p))
+      : room.players;
 
-  if (eliminatedId) {
-    players = players.map((p) =>
-      p.id === eliminatedId ? { ...p, isAlive: false } : p
-    );
-  }
-
-  await updateDoc(ref, {
-    status: 'reveal',
-    eliminatedId,
-    winner,
-    players,
+    tx.update(ref, { status: 'reveal', eliminatedId, winner, players });
   });
 }
 
 export async function nextRound(code: string): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
-
-  const room = snap.data() as Room;
-
-  await updateDoc(ref, {
-    status: 'discussion',
-    votes: {},
-    eliminatedId: null,
-    round: room.round + 1,
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const room = snap.data() as Room;
+    tx.update(ref, {
+      status: 'discussion',
+      votes: {},
+      eliminatedId: null,
+      round: room.round + 1,
+    });
   });
 }
 
 export async function finishGame(code: string): Promise<void> {
-  await updateDoc(doc(db, 'rooms', code), { status: 'finished' });
+  await updateDoc(roomRef(code), { status: 'finished' });
 }
 
 export async function playAgain(code: string): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const room = snap.data() as Room;
 
-  const room = snap.data() as Room;
-  const players = room.players.map((p) => ({
-    ...p,
-    isAlive: true,
-  }));
-
-  await updateDoc(ref, {
-    status: 'lobby',
-    players,
-    impostorIds: [],
-    currentPrompt: { crew: '', impostor: '' },
-    votes: {},
-    eliminatedId: null,
-    winner: null,
-    round: 1,
+    tx.update(ref, {
+      status: 'lobby',
+      players: room.players.map((p) => ({ ...p, isAlive: true })),
+      impostorIds: [],
+      currentPrompt: { crew: '', impostor: '' },
+      votes: {},
+      eliminatedId: null,
+      winner: null,
+      round: 1,
+    });
   });
 }
 
@@ -274,52 +266,70 @@ export async function setPlayerDisconnected(
   code: string,
   playerId: string
 ): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
 
-  const room = snap.data() as Room;
-  const players = room.players.map((p) =>
-    p.id === playerId ? { ...p, isConnected: false } : p
-  );
+    const room = snap.data() as Room;
+    const players = room.players.map((p) =>
+      p.id === playerId ? { ...p, isConnected: false } : p
+    );
 
-  const updates: Record<string, unknown> = { players };
+    const updates: Partial<Room> & { players: Player[] } = { players };
 
-  if (room.hostId === playerId) {
-    const nextHost = players.find((p) => p.id !== playerId && p.isConnected);
-    if (nextHost) {
-      updates.hostId = nextHost.id;
+    if (room.hostId === playerId) {
+      const nextHost = players.find((p) => p.id !== playerId && p.isConnected);
+      if (nextHost) updates.hostId = nextHost.id;
     }
-  }
 
-  if (room.impostorIds.includes(playerId) && room.status !== 'lobby') {
-    const remainingImpostors = room.impostorIds.filter((id) => id !== playerId);
-    if (remainingImpostors.length === 0) {
-      updates.status = 'finished';
-      updates.winner = 'crew';
+    if (room.impostorIds.includes(playerId) && room.status !== 'lobby') {
+      const remaining = room.impostorIds.filter((id) => id !== playerId);
+      if (remaining.length === 0) {
+        updates.status = 'finished';
+        updates.winner = 'crew';
+      }
     }
-  }
 
-  await updateDoc(ref, updates);
+    tx.update(ref, updates);
+  });
 }
 
 export async function leaveRoom(code: string, playerId: string): Promise<void> {
-  const ref = doc(db, 'rooms', code);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
+  const ref = roomRef(code);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
 
-  const room = snap.data() as Room;
+    const room = snap.data() as Room;
 
-  if (room.status === 'lobby') {
-    const players = room.players.filter((p) => p.id !== playerId);
-    if (players.length === 0) return;
+    if (room.status === 'lobby') {
+      const players = room.players.filter((p) => p.id !== playerId);
+      if (players.length === 0) return;
 
-    const updates: Record<string, unknown> = { players };
-    if (room.hostId === playerId) {
-      updates.hostId = players[0].id;
+      const updates: Partial<Room> & { players: Player[] } = { players };
+      if (room.hostId === playerId) updates.hostId = players[0].id;
+      tx.update(ref, updates);
+    } else {
+      const players = room.players.map((p) =>
+        p.id === playerId ? { ...p, isConnected: false } : p
+      );
+      const updates: Partial<Room> & { players: Player[] } = { players };
+
+      if (room.hostId === playerId) {
+        const nextHost = players.find((p) => p.id !== playerId && p.isConnected);
+        if (nextHost) updates.hostId = nextHost.id;
+      }
+
+      if (room.impostorIds.includes(playerId)) {
+        const remaining = room.impostorIds.filter((id) => id !== playerId);
+        if (remaining.length === 0) {
+          updates.status = 'finished';
+          updates.winner = 'crew';
+        }
+      }
+
+      tx.update(ref, updates);
     }
-    await updateDoc(ref, updates);
-  } else {
-    await setPlayerDisconnected(code, playerId);
-  }
+  });
 }

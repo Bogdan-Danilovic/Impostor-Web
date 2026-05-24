@@ -32,7 +32,7 @@ export interface Room {
   status: RoomStatus;
   hostId: string;
   gameMode: GameMode;
-  category: string;
+  category: Category;
   players: Player[];
   impostorIds: string[];
   currentPrompt: Prompt;

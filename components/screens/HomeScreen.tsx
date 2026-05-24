@@ -9,12 +9,17 @@ import { createRoom, joinRoom } from '@/lib/firestore';
 
 const stagger = {
   hidden: {},
-  show: { transition: { staggerChildren: 0.07 } },
+  show: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } },
 };
 
 const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 24 } },
+  hidden: { opacity: 0, y: 24 },
+  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 26 } },
+};
+
+const shake = {
+  x: [0, -8, 8, -6, 6, -3, 3, 0],
+  transition: { duration: 0.4 },
 };
 
 export function HomeScreen() {
@@ -22,71 +27,85 @@ export function HomeScreen() {
   const [name, setName] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState('');
+  const [errorKey, setErrorKey] = useState(0);
   const [loading, setLoading] = useState<'create' | 'join' | null>(null);
 
-  const canAct = name.trim().length >= 2;
+  const NAME_REGEX = /^[\p{L}\p{N} ]+$/u;
+  const trimmedName = name.trim();
+  const nameValid = trimmedName.length >= 2 && trimmedName.length <= 16 && NAME_REGEX.test(trimmedName);
+
+  function showError(msg: string) {
+    setError(msg);
+    setErrorKey((k) => k + 1);
+  }
 
   async function handleCreate() {
-    if (!canAct) return;
+    if (!nameValid) return;
     setError('');
     setLoading('create');
     try {
-      const { code, playerId } = await createRoom(name.trim());
+      const { code, playerId } = await createRoom(trimmedName);
       localStorage.setItem('playerId', playerId);
-      localStorage.setItem('playerName', name.trim());
+      localStorage.setItem('playerName', trimmedName);
       router.push(`/room/${code}`);
     } catch (err) {
-      console.error('[createRoom] Greška:', err);
-      setError(err instanceof Error ? err.message : 'Greška pri kreiranju sobe.');
+      showError(err instanceof Error ? err.message : 'Greška pri kreiranju sobe.');
       setLoading(null);
     }
   }
 
   async function handleJoin() {
-    if (!canAct || roomCode.trim().length !== 5) return;
+    if (!nameValid || roomCode.trim().length !== 5) return;
     setError('');
     setLoading('join');
     try {
-      const { playerId, error: joinError } = await joinRoom(
-        roomCode.trim().toUpperCase(),
-        name.trim()
-      );
+      const code = roomCode.trim().toUpperCase();
+      const { playerId, error: joinError } = await joinRoom(code, trimmedName);
       if (joinError) {
-        setError(joinError);
+        showError(joinError);
         setLoading(null);
         return;
       }
       localStorage.setItem('playerId', playerId);
-      localStorage.setItem('playerName', name.trim());
-      router.push(`/room/${roomCode.trim().toUpperCase()}`);
+      localStorage.setItem('playerName', trimmedName);
+      router.push(`/room/${code}`);
     } catch (err) {
-      console.error('[joinRoom] Greška:', err);
-      setError(err instanceof Error ? err.message : 'Greška pri pridruživanju.');
+      showError(err instanceof Error ? err.message : 'Greška pri pridruživanju.');
       setLoading(null);
     }
   }
 
   return (
-    <div className="flex flex-col items-center justify-center flex-1 px-6 py-12 h-screen-safe">
+    <div className="relative flex flex-col items-center justify-center flex-1 px-6 h-screen-safe overflow-hidden">
+      {/* Ambient background glow */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-violet-600/[0.07] rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[400px] h-[200px] bg-violet-500/[0.04] rounded-full blur-[80px] pointer-events-none" />
+
       <motion.div
         variants={stagger}
         initial="hidden"
         animate="show"
-        className="w-full max-w-sm flex flex-col items-center gap-8"
+        className="relative w-full max-w-[340px] flex flex-col items-center gap-10"
       >
-        {/* Logo */}
-        <motion.div variants={fadeUp} className="text-center flex flex-col items-center">
-          <div className="text-6xl mb-3">🎭</div>
-          <h1 className="text-4xl font-bold tracking-tight text-glow">
+        {/* Hero */}
+        <motion.div variants={fadeUp} className="text-center flex flex-col items-center pt-4">
+          <motion.div
+            className="text-5xl mb-5"
+            animate={{ rotate: [0, -3, 3, -2, 0] }}
+            transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
+          >
+            🎭
+          </motion.div>
+          <h1 className="text-[42px] font-bold tracking-[-0.03em] leading-none text-glow">
             <span className="text-violet-400">IM</span>
-            <span className="text-slate-100">POSTOR</span>
+            <span className="text-white">POSTOR</span>
           </h1>
-          <p className="mt-2 text-sm text-slate-400 tracking-wide">
+          <p className="mt-3 text-[13px] text-slate-500 tracking-[0.08em] uppercase">
             Otkrij ko blefira
           </p>
         </motion.div>
 
-        {/* Name input */}
+        {/* Name */}
         <motion.div variants={fadeUp} className="w-full">
           <Input
             label="Tvoje ime"
@@ -98,43 +117,47 @@ export function HomeScreen() {
           />
         </motion.div>
 
-        {/* Create room */}
+        {/* Create */}
         <motion.div variants={fadeUp} className="w-full">
           <Button
             fullWidth
-            disabled={!canAct || loading !== null}
+            disabled={!nameValid || loading !== null}
             onClick={handleCreate}
           >
-            {loading === 'create' ? 'Kreiranje...' : 'Napravi sobu'}
+            {loading === 'create' ? (
+              <motion.span
+                animate={{ opacity: [1, 0.4, 1] }}
+                transition={{ repeat: Infinity, duration: 1.2 }}
+              >
+                Kreiranje...
+              </motion.span>
+            ) : (
+              'Napravi sobu'
+            )}
           </Button>
         </motion.div>
 
         {/* Divider */}
-        <motion.div
-          variants={fadeUp}
-          className="flex items-center gap-4 w-full"
-        >
-          <div className="flex-1 h-px bg-slate-600/50" />
-          <span className="text-xs text-slate-500 uppercase tracking-widest">
-            ili
-          </span>
-          <div className="flex-1 h-px bg-slate-600/50" />
+        <motion.div variants={fadeUp} className="flex items-center gap-4 w-full">
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-700/50 to-transparent" />
+          <span className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">ili</span>
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-700/50 to-transparent" />
         </motion.div>
 
-        {/* Join room */}
+        {/* Join */}
         <motion.div variants={fadeUp} className="w-full flex gap-3">
           <Input
             placeholder="KOD"
             value={roomCode}
             onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
             maxLength={5}
-            className="text-center tracking-[0.3em] uppercase font-semibold"
+            className="text-center tracking-[0.3em] uppercase font-bold text-[15px]"
           />
           <Button
             variant="secondary"
-            disabled={!canAct || roomCode.trim().length !== 5 || loading !== null}
+            disabled={!nameValid || roomCode.trim().length !== 5 || loading !== null}
             onClick={handleJoin}
-            className="shrink-0"
+            className="shrink-0 px-5"
           >
             {loading === 'join' ? '...' : 'Uđi'}
           </Button>
@@ -143,9 +166,10 @@ export function HomeScreen() {
         {/* Error */}
         {error && (
           <motion.p
+            key={errorKey}
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-sm text-red-400 text-center"
+            animate={{ opacity: 1, ...shake }}
+            className="text-[13px] text-red-400 text-center"
           >
             {error}
           </motion.p>

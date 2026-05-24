@@ -16,7 +16,7 @@ import { rejoinRoom, setPlayerDisconnected } from '@/lib/firestore';
 export default function RoomPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
   const router = useRouter();
-  const { room, loading } = useRoom(code);
+  const { room, loading, error } = useRoom(code);
   const player = usePlayer();
   const hasRejoined = useRef(false);
 
@@ -32,12 +32,11 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
 
   useEffect(() => {
     if (!player.id) return;
+    const pid = player.id;
 
-    const handleBeforeUnload = () => {
-      setPlayerDisconnected(code, player.id!);
-    };
-
+    const handleBeforeUnload = () => setPlayerDisconnected(code, pid);
     window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [player.id, code]);
 
@@ -49,10 +48,10 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
     );
   }
 
-  if (!room) {
+  if (error || !room) {
     return (
       <div className="flex flex-col items-center justify-center flex-1 h-screen-safe gap-4">
-        <p className="text-sm text-slate-400">Soba ne postoji.</p>
+        <p className="text-sm text-slate-400">{error || 'Soba ne postoji.'}</p>
         <button
           onClick={() => router.push('/')}
           className="text-sm text-violet-400 hover:text-violet-300 transition-colors"
