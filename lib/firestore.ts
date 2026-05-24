@@ -283,11 +283,17 @@ export async function setPlayerDisconnected(
       if (nextHost) updates.hostId = nextHost.id;
     }
 
-    if (room.impostorIds.includes(playerId) && room.status !== 'lobby') {
-      const remaining = room.impostorIds.filter((id) => id !== playerId);
-      if (remaining.length === 0) {
+    if (room.status !== 'lobby') {
+      const connectedAlive = players.filter((p) => p.isConnected && p.isAlive);
+      if (connectedAlive.length < 3) {
         updates.status = 'finished';
-        updates.winner = 'crew';
+        updates.winner = null;
+      } else if (room.impostorIds.includes(playerId)) {
+        const remaining = room.impostorIds.filter((id) => id !== playerId);
+        if (remaining.length === 0) {
+          updates.status = 'finished';
+          updates.winner = 'crew';
+        }
       }
     }
 
@@ -321,7 +327,11 @@ export async function leaveRoom(code: string, playerId: string): Promise<void> {
         if (nextHost) updates.hostId = nextHost.id;
       }
 
-      if (room.impostorIds.includes(playerId)) {
+      const connectedAlive = players.filter((p) => p.isConnected && p.isAlive);
+      if (connectedAlive.length < 3) {
+        updates.status = 'finished';
+        updates.winner = null;
+      } else if (room.impostorIds.includes(playerId)) {
         const remaining = room.impostorIds.filter((id) => id !== playerId);
         if (remaining.length === 0) {
           updates.status = 'finished';

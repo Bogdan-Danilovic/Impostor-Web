@@ -45,11 +45,20 @@ export function GameOverScreen({ room, playerId }: Props) {
             animate={{ scale: [1, 1.2, 1] }}
             transition={{ delay: 0.3, duration: 0.5, ease: 'easeOut' }}
           >
-            {crewWon ? '🎉' : '🎭'}
+            {room.winner === null ? '⚠️' : crewWon ? '🎉' : '🎭'}
           </motion.p>
           <h2 className="text-[28px] font-bold text-white tracking-[-0.03em] leading-tight">
-            {crewWon ? 'Crewmate tim\npobeđuje' : 'Impostor\npobeđuje'}
+            {room.winner === null
+              ? 'Igra prekinuta'
+              : crewWon
+                ? 'Crewmate tim\npobeđuje'
+                : 'Impostor\npobeđuje'}
           </h2>
+          {room.winner === null && (
+            <p className="text-[12px] text-slate-500 mt-2">
+              Premalo igrača za nastavak
+            </p>
+          )}
         </motion.div>
 
         {/* Stats bar */}
