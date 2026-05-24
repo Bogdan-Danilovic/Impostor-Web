@@ -35,7 +35,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="sr" className={`${spaceGrotesk.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col bg-bg font-sans noise">
+      <body className="min-h-full flex flex-col bg-bg font-sans scanline">
+        <div className="breathing-orb fixed z-0 w-[600px] h-[600px] bg-violet-900/30" style={{ top: -200, left: -200 }} />
+        <div className="breathing-orb fixed z-0 w-[400px] h-[400px] bg-indigo-900/20" style={{ bottom: -100, right: -150, animationDelay: '4s' }} />
         {children}
       </body>
     </html>

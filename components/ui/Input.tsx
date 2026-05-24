@@ -11,7 +11,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full">
         {label && (
-          <label className="block text-[11px] font-medium text-slate-500 mb-2 tracking-widest uppercase">
+          <label className="block text-[10px] font-medium text-slate-500 mb-2 tracking-[0.2em] uppercase">
             {label}
           </label>
         )}
@@ -19,13 +19,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           suppressHydrationWarning
           className={`
-            w-full rounded-xl
-            bg-surface/50 border border-border
-            px-4 py-3 text-[14px] text-slate-100 min-h-[44px]
-            placeholder:text-slate-400
-            focus:outline-none focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/15
-            focus:bg-surface/70
-            transition-all duration-200
+            w-full bg-white/[0.03] border-b border-white/[0.08]
+            px-0 py-3 text-[15px] text-slate-100 min-h-[44px]
+            placeholder:text-slate-600
+            focus:outline-none focus:border-violet-500/40
+            transition-colors duration-300
             ${className}
           `}
           {...props}
