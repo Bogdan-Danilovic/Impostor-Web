@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Bogdan-Danilovic/Game-Hub/main/game.config.schema.json",
+  "id": "impostor",
+  "name": "Impostor",
+  "version": "1.0.0",
+  "description": "Jedan od vas laže. Ostali moraju da otkriju ko je uhoda.",
+  "shortDescription": "Pronađi lažova",
+  "icon": "🎭",
+  "accentColor": "#8b5cf6",
+  "minPlayers": 3,
+  "maxPlayers": 12,
+  "avgDuration": "10-20 min",
+  "tags": ["dedukcija", "blef"],
+
+  "gameType": {
+    "id": "impostor",
+    "statuses": ["lobby", "roleReveal", "discussion", "voting", "reveal", "finished"]
+  },
+
+  "files": {
+    "types": "lib/types.ts",
+    "firestore": "lib/firestore.ts",
+    "utils": "lib/utils.ts",
+    "prompts": "lib/prompts/",
+    "components": "components/screens/",
+    "pages": {
+      "home": "app/page.tsx",
+      "room": "app/room/[code]/page.tsx"
+    }
+  },
+
+  "sharedDependencies": {
+    "components": ["components/ui/"],
+    "hooks": ["hooks/usePlayer.ts"],
+    "lib": ["lib/firebase.ts", "lib/utils.ts"]
+  },
+
+  "npmDependencies": {}
+}
